@@ -1,0 +1,311 @@
+---
+title: "llll"
+author: "Juntao Zhang"
+date: "18/03/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## HR Analystics Data Project
+
+**Introduction**
+
+A company is providing training for future employees and they have a data set of the people who registered for the training. There are 19158 observations and 11 variables in the data set. The data set comes from Kaggle. 
+
+*Variables* (explanation, % missing and type):
+
+enrollee_id: Unique ID for candidate, 0 NA, continuous variable\
+City: City code, 0 NA, continuous variable\
+
+Gender: Gender of candidate, about 23% NAs
+
+Relevent_experience: relevant experience of candidate, no NA
+
+Enrolled_university: Type of University course enrolled if any, about 2% NAs, categorical variable
+
+Education_level: Education level of the candidate, about 2.3% NAs, categorical variable
+
+Experience: Candidate total experience in years, no NA, continuous variable 
+Company_size: Number of employees in current employer's company, about 31% NAs, categorical variable
+
+Lastnewjob: Difference in years between previous job and current job, about 2% NAs, categorical variable
+
+Training_hours:Training hours completed, 0 NAs, continuous variable
+
+Target: 0-Not looking for job change, 1-looking for job change, 0 NAs, binary variable
+
+The objective of the analysis is to identify which of the candidates really wants to work for the company (i.e looking for a job change). So a regression model will be fitted to the data with the target variable as the dependent variable and the other variables as the independent variables. The analysis is to find out the effects of the independent variables on the identifier variable: target.
+
+
+```{r load&inspect}
+data <-read.csv("C:/Users/joann/OneDrive/Desktop/missing data/week 2/aug_train.csv", 
+                 na.strings = "")
+str(data)
+```
+
+Variable data types are shown above. We need to encode some variables before we perform any analysis. 
+
+```{r encode}
+library(plyr)
+#for relevent_experience
+data$relevent_experience <- revalue(data$relevent_experience, 
+                                    c("Has relevent experience"=1))
+data$relevent_experience <- revalue(data$relevent_experience, 
+                                    c("No relevent experience"=0))
+data$relevent_experience <-as.numeric(data$relevent_experience)
+
+#for gender
+data$gender <-as.numeric(factor(data$gender, levels = c("Male","Female","Other")))
+
+#for enrolled_university
+data$enrolled_university <- revalue(data$enrolled_university, 
+                                    c("no_enrollment"=0))
+data$enrolled_university <- revalue(data$enrolled_university, 
+                                    c("Part time course"=1))
+data$enrolled_university <- revalue(data$enrolled_university,
+                                    c("Full time course" = 2))
+data$enrolled_university <-as.numeric(data$enrolled_university)
+
+#for education_level
+data$education_level <- as.numeric(factor(data$education_level, 
+                                          levels = c("Primary School",
+                                    "High School","Graduate","Masters","Phd")))
+
+#for experience
+data$experience <- revalue(data$experience, c("<1"=0))
+data$experience <- revalue(data$experience, c(">20"=21))
+data$experience<-as.numeric(data$experience)
+
+#for company size
+data$company_size <- as.numeric(factor(data$company_size, levels = c("<10",
+                                    "10/49","50-99" ,"100-500","500-999",
+                                    "1000-4999","5000-9999", "10000+" )))
+
+#for last_new_job
+data$last_new_job <- revalue(data$last_new_job, c("never"=0))
+data$last_new_job <- revalue(data$last_new_job, c(">4"=5))
+data$last_new_job <-as.numeric(data$last_new_job)
+
+```
+
+Since city id and enrollee id are not needed in the analysis, I will drop these two variables. The complete variables are training_hours, relevent_experience and target. For categorical variables, gender has 4508 missing values, which is about 31% of the total observations.Since the only continuous variable with missing values (experience) has only 65 missing NA's, I will drop the 65 NA's for experience and generate 20% missing values for another continuous variable: training hours. So we have one complete and one 20% missing continuous variables.
+
+```{r select data}
+#I will keep the variables that can be used for my analysis
+library(dplyr)
+data2 = select(data,-c('enrollee_id','city'))
+#delete the 65 NA observations for experience
+data2=data2[!is.na(data2$experience), ]
+
+```
+
+```{r generate missing values}
+#Generate missing values for training_hours depending on one variable
+library(dplyr)
+data_new = select(data2,'experience','training_hours')
+library(mice)
+set.seed(102)
+cont_cat = ampute(data_new,prop = 0.2,patterns=c(1,0),mech = "MAR")$amp
+data2['training_hours'] = cont_cat['training_hours']
+
+```
+
+**Listwise Imputation**
+```{r listwise imputation}
+#listwise deletion based on the original data set 
+data_complete = na.omit(data)
+model1 = glm(target ~ training_hours+factor(gender)+relevent_experience+last_new_job+
++ + enrolled_university+education_level+company_size+experience,data = data_complete, family = binomial())
+summary(model1)
+
+```
+
+#Mean/Mode Imputation
+```{r mean/mode imputation}
+#copy data set
+data3 = data2
+#Mean imputation for numeric missing values
+mean.imp <- function (a)
+{ missing <- is.na(a)
+  a.obs <- a[!missing]
+  imputed <- a
+  imputed[missing] <- mean(a.obs)
+  return (imputed)
+}
+
+data3['training_hours']=mean.imp(data3['training_hours'])
+
+#Mode imputation for the categorical variables
+mode <- function (a)
+{ ta =table(a)
+  tam = max(ta)
+  if(all(ta==tam))
+    mod =NA
+  else
+    mod = as.numeric(names(ta)[ta==tam])
+  return (mod)
+}
+
+mode.imp <- function (a)
+{
+  missing <- is.na(a)
+  a.obs <- a[!missing]
+  imputed <- a
+  imputed[missing] <- mode(a.obs)
+  return (imputed)
+}
+data3['enrolled_university'] = mode.imp(data3['enrolled_university'])
+data3['education_level'] = mode.imp(data3['education_level'])
+data3['company_size'] = mode.imp(data3['company_size'])
+data3['last_new_job'] = mode.imp(data3['last_new_job'])
+data3$gender = mode.imp(data3$gender)
+```
+
+
+```{r mean/mode imp analysis}
+model2 = glm(target ~ training_hours+factor(gender)+relevent_experience+last_new_job+
+enrolled_university+education_level+company_size+experience,data= data3,
+family=binomial())
+summary(model2)
+mean(abs(model1$coef -model2$coef)/abs(model1$coef))
+```
+
+
+##Random Imputation
+```{r random imputation}
+data4 = data2
+random.imp <- function (a)
+{
+  missing <- is.na(a)
+  n.missing <- sum(missing)
+  a.obs <- a[!missing]
+  imputed <- a
+  imputed[missing] <- as.numeric(sample (a.obs, n.missing, replace=TRUE))
+  return (imputed)
+}
+
+data4$gender = random.imp(data2$gender)
+data4$education_level = random.imp(data2$education_level)
+data4$company_size = random.imp(data2$company_size)
+data4$last_new_job = random.imp(data2$last_new_job)
+data4$enrolled_university= random.imp(data2$enrolled_university)
+data4$training_hours = random.imp(data2$training_hours)
+
+```
+
+```{r random imp analysis}
+model3 = glm(target ~ training_hours+factor(gender)+relevent_experience+last_new_job+
+              enrolled_university+education_level+company_size+experience,family=binomial(),data = data4)
+summary(model3)
+mean(abs(model1$coef -model3$coef)/abs(model3$coef))
+```
+
+##Dummy Variable Imputation
+```{r dummy variable imputation}
+#copy data set
+data5 = data2
+#dummy variable imputation on training_hours
+data5['training_hours']=mean.imp(data5['training_hours'])
+d1 = is.na(data2$training_hours)
+
+#dummy variable imputation on other categorical variables
+data5$gender = mode.imp(data5$gender)
+data5['education_level'] = mode.imp(data5['education_level'])
+data5['company_size'] = mode.imp(data5['company_size'])
+data5['last_new_job'] = mode.imp(data5['last_new_job'])
+data5['enrolled_university'] = mode.imp(data5['enrolled_university'])
+d2 = is.na(data2$gender)
+d3 = is.na(data2$education_level)
+d4 = is.na(data2$company_size)
+d5 = is.na(data2$last_new_job)
+d6 = is.na(data2$enrolled_university)
+```
+
+
+```{r dummy var imp analysis}
+model4 = glm(target ~ training_hours+factor(gender)+relevent_experience+last_new_job+
+              enrolled_university+education_level+company_size+experience+d1+d2+d3+d4+d5+d6,data = data5,family=binomial())
+summary(model4)
+mean(abs(model1$coef -model4$coef[1:10])/abs(model1$coef))
+```
+
+
+##Regression Imputation
+```{r regression imputation}
+#copy data set
+data6 = data2
+#variables without missing values are: target,experience and relevent_experience
+#Missing data indicator
+Ry = as.numeric(!is.na(data6$training_hours))
+data.cc = data6[Ry ==1, ]
+data.dropped = data6[Ry ==0, ]
+reg = lm(training_hours ~relevent_experience+target+experience,data = data.cc)
+y.imp = predict(reg, newdata = data.dropped)
+data6$training_hours[Ry == 0] = y.imp
+
+```
+
+```{r regression imputation2}
+#for categorical variables
+#select the complete variables
+x<- select(data6,'relevent_experience','target','experience')
+
+#use polytomous regression for categorical variables that are not dichotomous
+Ry1 = as.numeric(!is.na(data6$gender))
+gender.imp = mice.impute.polyreg(data6$gender, !is.na(data6$gender), x)
+# Impute the predictions where they belong:
+data6$gender[Ry1 == 0] = gender.imp
+
+#use another function from the mice package for ordered categorical variables
+Ry2 = as.numeric(!is.na(data6$education_level))
+edu.imp = mice.impute.polr(data6$education_level, !is.na(data6$education_level), x)
+# Impute the predictions where they belong:
+data6$education_level[Ry2 == 0] = as.numeric(edu.imp)
+
+Ry3 = as.numeric(!is.na(data6$enrolled_university))
+enu.imp = mice.impute.polr(data6$enrolled_university, !is.na(data6$enrolled_university), x)
+# Impute the predictions where they belong:
+data6$enrolled_university[Ry3 == 0] = as.numeric(enu.imp)
+
+Ry4 = as.numeric(!is.na(data6$company_size))
+comp.imp = mice.impute.polr(data6$company_size, !is.na(data6$company_size), x)
+# Impute the predictions where they belong:
+data6$company_size[Ry4 == 0] =as.numeric(comp.imp)
+
+Ry5 = as.numeric(!is.na(data6$last_new_job))
+lnj.imp = mice.impute.polr(data6$last_new_job, !is.na(data6$last_new_job), x)
+# Impute the predictions where they belong:
+data6$last_new_job[Ry5 == 0] = as.numeric(lnj.imp)
+```
+
+```{r Regression Imputation analysis}
+#the missing values in the categorical variables are omitted for the analysis
+model6 = glm(target ~ training_hours+factor(gender)+relevent_experience+last_new_job+
+              enrolled_university+education_level+company_size+experience,data = data6,family=binomial())
+summary(model6)
+mean(abs(model1$coef -model6$coef)/abs(model6$coef))
+```
+
+```{r regression with noise}
+#we don't have dichotomous categorical variables, so we only add noise to the numeric variable
+data7 = data6
+data7$training_hours = data2$training_hours
+noise = rnorm(length(y.imp), 0, summary(reg)$sigma)
+y.imps = y.imp + noise
+data7$training_hours[Ry == 0] = y.imps
+```
+
+```{r regression with noise analysis}
+#the missing values in the categorical variables are omitted for the analysis
+model7 = glm(target ~ training_hours+gender+relevent_experience+last_new_job+
+              enrolled_university+education_level+company_size+experience,
+             data = data7,family=binomial())
+summary(model7)
+mean(abs(model1$coef -model7$coef)/abs(model7$coef))
+```
+
+
+
